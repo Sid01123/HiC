@@ -1,0 +1,224 @@
+---
+title: "ML code"
+author: "Siddhant Sanghi"
+date: "24/04/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(HiCcompare)
+library(strawr)
+```
+
+```{r}
+mat_KO_19 <- straw("observed","NONE","/Users/siddhant/Downloads/4DNFIT4I5C6Z.hic", 
+                   "19","19","BP", 5000)
+
+```
+
+```{r}
+mat_WT_19 <- straw("observed","NONE","/Users/siddhant/Downloads/4DNFIVUGNDD7.hic", 
+                   "19","19","BP", 5000)
+
+```
+
+```{r}
+mat_KO_full_19 <- sparse2full(mat_KO_19,hic.table = FALSE, column.name = NA)
+
+```
+
+```{r}
+mat_WT_full_19 <- sparse2full(mat_WT_19,hic.table = FALSE, column.name = NA)
+```
+
+```{r}
+inverse_func <- function(dij) {
+  return (1/(dij**0.5))
+}
+
+create_dissim_mat <-  function(contact_mat, inverse, method) {
+  Da <- apply(contact_mat, c(1,2), inverse)
+  D <- dist(Da, method=method)
+  d <- as.matrix(D)
+  d[is.nan(d)] <- 0
+  d[is.na(d)] <- 0
+  d[is.infinite(d)] <- 0
+  return (d)
+}
+
+seq_func <- function (pos) {
+  mat <- matrix(nrow = length(pos), ncol = length(pos))
+  for (i in seq_along(pos)) {
+    for (j in seq_along(pos)){
+      mat[i,j] <- abs(pos[i] - pos[j])
+    }
+  }
+  return (mat)
+}
+
+```
+
+```{r}
+pheatmap(mat_WT_full_19[300:320,300:320], cellwidth=10, cellheight = 10)
+pheatmap(mat_KO_full_19[300:320,300:320], cellwidth=10, cellheight = 10)
+```
+
+```{r}
+dissim_mat_WT_euc <-create_dissim_mat(mat_WT_full_19[300:320,300:320], inverse_func,
+                                  "euclidean")
+pheatmap(dissim_mat_WT_euc, cellheight = 10, cellwidth = 10)
+```
+
+```{r}
+dissim_mat_KO_euc <-create_dissim_mat(mat_KO_full_19[300:320,300:320], inverse_func,
+                                  "euclidean")
+pheatmap(dissim_mat_KO_euc, cellheight = 10, cellwidth = 10)
+```
+
+```{r}
+dissim_mat_WT_seq <- seq_func(as.numeric(rownames(dissim_mat_WT_euc)))
+pheatmap(dissim_mat_WT_seq, cellheight = 10, cellwidth = 10)
+
+```
+
+```{r}
+dissim_mat_KO_seq <- seq_func(as.numeric(rownames(dissim_mat_KO_euc)))
+pheatmap(dissim_mat_KO_seq, cellheight = 10, cellwidth = 10)
+```
+
+```{r}
+myCMDScale <- function(d, k = 2){
+  n <- dim(d)[1]
+  x <- matrix(0, n, n) 
+  x[row(x) > col(x)] <- d**2
+  x <- scale(x + t(x),scale=FALSE) # centering
+
+  # Closed form solution for Classical MDS through eigenvalue decomposition
+  eigensol <- eigen(-x/2, symmetric = TRUE)
+  evals <- eigensol$values[seq_len(k)]
+  evecs <- eigensol$vectors[, seq_len(k), drop = FALSE]
+  pts <- evecs * rep(sqrt(evals), each=n)
+  return(pts)
+}
+
+```
+
+```{r}
+library(scatterplot3d)
+mds_plot <- function(d) {
+  mymds.chrom <- myCMDScale(d, k=3) 
+  mymds.chrom_df <- data.frame(mymds.chrom)
+  splot <- scatterplot3d(mymds.chrom_df, color = 'red')
+  splot$box3d()
+  return(mymds.chrom_df)
+}
+```
+
+```{r}
+h1 <- mds_plot(dissim_mat_WT_euc)
+```
+
+```{r}
+h2 <-mds_plot(dissim_mat_KO_euc)
+```
+
+```{r}
+
+mds_plot(dissim_mat_WT_seq) # mds_plot(dissim_mat_KO_seq)
+
+```
+
+```{r}
+X_WT <- h1[,1:2]
+y_WT <- abs(h1[,3])
+y_col <- c('#7DB0DD', '#86B875', '#E495A5')
+pdf('dat_iris.pdf')
+pairs(X_WT, lower.panel = NULL, col = y_col[y_WT])
+par(xpd = T)
+#legend(x = 0.1, y = 0.4, legend = as.character(levels(y)), fill = y_col)
+dev.off()
+```
+
+```{r}
+X_KO <- h2[,1:2]
+y_KO <- abs(h2[,3])
+y_col <- c('#7DB0DD', '#86B875', '#E495A5')
+pdf('dat_iris.pdf')
+pairs(X_KO, lower.panel = NULL, col = y_col[y_KO])
+par(xpd = T)
+#legend(x = 0.1, y = 0.4, legend = as.character(levels(y)), fill = y_col)
+dev.off()
+```
+
+```{r}
+
+myKMeans <- function(X, k){
+  p <- ncol(X)  # parameters
+  n <- nrow(X)  # observations
+  
+  iter <- 0
+  maxiter <- 30
+  del <- 1
+  
+  while(del > 1e-4 && iter <= maxiter){
+    # random initiation
+    if(iter == 0){
+      ctroid <- X[sample(nrow(X), k),]
+      ctroidmem <- ctroid
+    }
+    
+    # Hard E-step
+    d <- sapply(1:k, 
+                function(c) {
+                    sapply(1:n, 
+                           function(i){ 
+                              sum((ctroid[c,] - X[i,])**2)
+                             }
+                           )
+                  }
+                )
+    clust <- apply(d, 1, which.min)
+    
+    # Hard M-step
+    ctroid <- t(sapply(1:k, 
+                       function(c) {
+                           apply(X[clust == c,], 2, mean)
+                         }
+                       )
+                )
+    del <- sum((ctroid - ctroidmem)**2)
+    iter <- iter + 1 
+    ctroidmem <- ctroid
+  }
+  
+  return (list(centroid = ctroid, cluster = clust))
+}
+
+```
+
+```{r}
+# run K-means for WT
+km <- myKMeans(X_WT, 4)
+pairs(X_WT, lower.panel = NULL, col = km$cluster)
+table(y_WT, km$cluster)
+km.R <- kmeans(X_WT, 4)
+table(y_WT, km.R$cluster)
+
+```
+
+```{r}
+# run K-means for KO
+km_2 <- myKMeans(X_KO, 2)
+pairs(X_KO, lower.panel = NULL, col = km_2$cluster)
+table(y_KO, km_2$cluster)
+km2.R <- kmeans(X_KO, 2)
+table(y_KO, km2.R$cluster)
+```
+
+
+
